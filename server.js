@@ -1,46 +1,33 @@
 /*
- Updated server.js to integrate Smartproxy rotating proxy
+ Updated server.js to route all requests through Cloudflare Workers proxy
 */
 
 // Listen on a specific host via the HOST environment variable
-var host = process.env.HOST || '0.0.0.0';
+const host = process.env.HOST || '0.0.0.0';
 // Listen on a specific port via the PORT environment variable
-var port = process.env.PORT || 8080;
+const port = process.env.PORT || 8080;
+
+// Worker endpoint (your Cloudflare Worker with CORS proxy logic)
+const WORKER_ENDPOINT = process.env.WORKER_ENDPOINT;
+if (!WORKER_ENDPOINT) {
+  console.error('[ERROR] WORKER_ENDPOINT not set.');
+  process.exit(1);
+}
 
 // Grab the blacklist and whitelist from env
 function parseEnvList(env) {
   return env ? env.split(',') : [];
 }
-var originBlacklist = parseEnvList(process.env.CORSANYWHERE_BLACKLIST);
-var originWhitelist = parseEnvList(process.env.CORSANYWHERE_WHITELIST);
+const originBlacklist = parseEnvList(process.env.CORSANYWHERE_BLACKLIST);
+const originWhitelist = parseEnvList(process.env.CORSANYWHERE_WHITELIST);
 
 // Rate-limiting to avoid abuse
-var checkRateLimit = require('./lib/rate-limit')(process.env.CORSANYWHERE_RATELIMIT);
+const checkRateLimit = require('./lib/rate-limit')(process.env.CORSANYWHERE_RATELIMIT);
 
-// CORS Anywhere core
-var cors_proxy = require('./lib/cors-anywhere');
+// CORS Anywhere core (we'll use it just for CORS + rate-limiting)
+const cors_proxy = require('./lib/cors-anywhere');
 
-// HTTP(S) proxy agent for Smartproxy
-const { HttpsProxyAgent } = require('https-proxy-agent');
-
-// Smartproxy credentials and endpoint (rotating port)
-const SMART_USER = process.env.SMARTPROXY_USER;
-const SMART_PASS = process.env.SMARTPROXY_PASS;
-const SMART_HOST = process.env.SMARTPROXY_HOST || 'gate.decodo.com';
-const SMART_PORT = process.env.SMARTPROXY_PORT || '10000';
-
-if (!SMART_USER || !SMART_PASS) {
-  console.warn('[WARN] SMARTPROXY_USER or SMARTPROXY_PASS not set. Requests will go direct without proxy.');
-}
-
-// Build proxy URL if credentials exist
-const proxyAuth = SMART_USER && SMART_PASS
-  ? `${SMART_USER}:${SMART_PASS}@${SMART_HOST}:${SMART_PORT}`
-  : null;
-const agentOptions = proxyAuth
-  ? new HttpsProxyAgent(`http://${proxyAuth}`)
-  : null;
-
+// Create the proxy server
 cors_proxy.createServer({
   originBlacklist: originBlacklist,
   originWhitelist: originWhitelist,
@@ -56,12 +43,30 @@ cors_proxy.createServer({
     'total-route-time',
   ],
   redirectSameOrigin: true,
-  httpProxyOptions: {
-    xfwd: false,
-    // Inject Smartproxy agent if configured
-    agent: agentOptions || undefined
+
+  // Rewrite every request to go through the Worker
+  proxyReqPathResolver: function(req) {
+    // req.url is like '/https://target.site/path?query'
+    const originalTarget = req.url.slice(1); // remove leading slash
+    const workerUrl = `${WORKER_ENDPOINT}?url=${encodeURIComponent(originalTarget)}`;
+    // Return just the path+query for the Worker host
+    const path = new URL(workerUrl).pathname + (new URL(workerUrl).search || '');
+    return path;
   },
+
+  proxyReqOptDecorator: function(proxyOpts, srcReq) {
+    // Point request at the Worker host instead of original target
+    const workerUrl = new URL(WORKER_ENDPOINT);
+    proxyOpts.protocol = workerUrl.protocol;
+    proxyOpts.host = workerUrl.hostname;
+    proxyOpts.hostname = workerUrl.hostname;
+    proxyOpts.port = workerUrl.port || (workerUrl.protocol === 'https:' ? 443 : 80);
+    // Set correct Host header for the Worker
+    proxyOpts.headers.host = workerUrl.host;
+    return proxyOpts;
+  }
+
 }).listen(port, host, function() {
-  console.log(`Running CORS Anywhere on ${host}:${port}`);
-  if (agentOptions) console.log('→ Using Smartproxy rotating proxy');
+  console.log(`Running CORS Anywhere (via Worker) on ${host}:${port}`);
+  console.log(`→ Forwarding all requests through Worker at ${WORKER_ENDPOINT}`);
 });
