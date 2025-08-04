@@ -54,8 +54,20 @@ cors_proxy.createServer({
     console.log('URL:', req.url);
     console.log('Headers:', JSON.stringify(req.headers, null, 2));
 
-    var originalTarget = req.url.slice(1);
-    var workerUrl = WORKER_ENDPOINT + '?url=' + encodeURIComponent(originalTarget);
+    // Handle different URL formats
+    var originalTarget;
+    if (req.url.startsWith('/https://') || req.url.startsWith('/http://')) {
+      // Direct URL format: /https://example.com/path
+      originalTarget = req.url.slice(1);
+    } else if (req.url.startsWith('/?url=')) {
+      // Already has query parameter: /?url=https://example.com
+      originalTarget = req.url.substring(6); // Remove '/?url='
+    } else {
+      // Fallback
+      originalTarget = req.url.slice(1);
+    }
+
+    var workerUrl = WORKER_ENDPOINT + '?url=' + originalTarget;
 
     console.log('Original target:', originalTarget);
     console.log('Worker URL:', workerUrl);
@@ -73,15 +85,15 @@ cors_proxy.createServer({
     console.log('Original target:', proxyOpts.target);
     console.log('Worker endpoint:', WORKER_ENDPOINT);
 
-    // Point request at the Worker host instead of original target
-    var parsedUrl = require('url').parse(WORKER_ENDPOINT);
-    proxyOpts.protocol = parsedUrl.protocol;
-    proxyOpts.host = parsedUrl.hostname;
-    proxyOpts.hostname = parsedUrl.hostname;
-    proxyOpts.port = parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80);
+    // Completely override the target to point to the worker
+    proxyOpts.target = WORKER_ENDPOINT;
+    proxyOpts.protocol = 'https:';
+    proxyOpts.host = 'cors-proxy.dhieeego.workers.dev';
+    proxyOpts.hostname = 'cors-proxy.dhieeego.workers.dev';
+    proxyOpts.port = 443;
 
     // Set correct Host header for the Worker
-    proxyOpts.headers.host = parsedUrl.host;
+    proxyOpts.headers.host = 'cors-proxy.dhieeego.workers.dev';
 
     // Ensure changeOrigin is true for proper proxy behavior
     proxyOpts.changeOrigin = true;
