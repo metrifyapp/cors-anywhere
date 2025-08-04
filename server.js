@@ -49,19 +49,30 @@ cors_proxy.createServer({
 
   // Rewrite every request to go through the Worker
   proxyReqPathResolver: function(req) {
+    console.log('=== INCOMING REQUEST ===');
+    console.log('Method:', req.method);
+    console.log('URL:', req.url);
+    console.log('Headers:', JSON.stringify(req.headers, null, 2));
+
     var originalTarget = req.url.slice(1);
     var workerUrl = WORKER_ENDPOINT + '?url=' + encodeURIComponent(originalTarget);
 
-    // Only log in debug mode to avoid sensitive data exposure
-    if (DEBUG) {
-      console.log('Rewriting to worker: ' + workerUrl);
-    }
+    console.log('Original target:', originalTarget);
+    console.log('Worker URL:', workerUrl);
 
     var parsedUrl = require('url').parse(workerUrl);
-    return parsedUrl.pathname + (parsedUrl.search || '');
+    var finalPath = parsedUrl.pathname + (parsedUrl.search || '');
+    console.log('Final path:', finalPath);
+    console.log('=======================');
+
+    return finalPath;
   },
 
   proxyReqOptDecorator: function(proxyOpts) {
+    console.log('=== PROXY OPTIONS ===');
+    console.log('Original target:', proxyOpts.target);
+    console.log('Worker endpoint:', WORKER_ENDPOINT);
+
     // Point request at the Worker host instead of original target
     var parsedUrl = require('url').parse(WORKER_ENDPOINT);
     proxyOpts.protocol = parsedUrl.protocol;
@@ -74,6 +85,9 @@ cors_proxy.createServer({
 
     // Ensure changeOrigin is true for proper proxy behavior
     proxyOpts.changeOrigin = true;
+
+    console.log('Modified proxy options:', JSON.stringify(proxyOpts, null, 2));
+    console.log('=====================');
 
     return proxyOpts;
   },
